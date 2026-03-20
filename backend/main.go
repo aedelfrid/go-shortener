@@ -1,32 +1,52 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"sync/atomic"
 
-	"github.com/gin-gonic/gin"
-	//"github.com/go-redis/redis/v8"
 	"fmt"
+	"os"
 	"math/rand"
+
+	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
+	"github.com/joho/godotenv"
 )
 
-var urlStore = make(map[string]string)
+
+
+var ctx = context.Background()
+var rdb *redis.Client
+
 var counter int64 = 10000
 
 func randomID() string {
 	return fmt.Sprintf("%d", rand.Intn(999999))
 }
 
+func init() {
+
+	err := godotenv.Load()
+	if err != nil {
+		fmt.Println("No .env file found, using default system envs")
+	}
+
+	opt, _ := redis.ParseURL(os.Getenv("REDIS_URL"))
+
+	rdb = redis.NewClient(opt)
+}
+
 func main() {
 	r := gin.Default()
 
-	r.POST("/shorten", func(ctx *gin.Context) {
+	r.POST("/shorten", func(c *gin.Context) {
 		var input struct {
 			LongURL string `json:"url"`
 		}
 
-		if err := ctx.ShouldBindJSON(&input); err != nil {
-			ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 			return
 		}
 
@@ -34,26 +54,36 @@ func main() {
 
 		shortCode:= Encode(uint64(newID))
 
-		urlStore[shortCode] = input.LongURL
+		err := rdb.Set(ctx, shortCode, input.LongURL, 0).Err()
 
-		ctx.JSON(http.StatusOK, gin.H{
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save to Redis"})
+        	return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
 			"short_url": "http://localhost:4000/" + shortCode,
 			"code" : shortCode,
 		})
 	})
 
-	r.GET("/:code", func(ctx *gin.Context) {
-		code := ctx.Param("code")
-		LongURL, exists := urlStore[code]
+	r.GET("/:code", func(c *gin.Context) {
+		code := c.Param("code")
+		
 
-		if !exists {
-			ctx.JSON(http.StatusNotFound, gin.H{"error":"URL not found"})
-			return
+		longURL, err := rdb.Get(ctx, code).Result()
+		
+		if err == redis.Nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Short link not found"})
+        	return
+		} else if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+        	return
 		}
 
-		ctx.Redirect(http.StatusMovedPermanently, LongURL)
+		c.Redirect(http.StatusMovedPermanently, longURL)
 
 	})
 
-	r.Run(":4000")
+	r.Run(os.Getenv("PORT"))
 }
