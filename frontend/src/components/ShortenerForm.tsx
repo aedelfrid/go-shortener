@@ -1,7 +1,14 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, Copy, Check, ArrowRight, Loader2 } from 'lucide-react';
+
+type HistoryItem = {
+    longUrl: string;
+    shortUrl: string;
+    code: string;
+    timestamp: number;
+}
 
 export default function ShortenerForm() {
     const [longUrl, setLongUrl] = useState('');
@@ -9,6 +16,12 @@ export default function ShortenerForm() {
     const [loading, setLoading] = useState(false);
     const [copied, setCopied] = useState(false);
     const [error, setError] = useState('');
+    const [history, setHistory] = useState<HistoryItem[]>([]);
+
+    useEffect(() => {
+        const saved = localStorage.getItem('url_history');
+        if (saved) setHistory(JSON.parse(saved))
+    })
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -18,6 +31,7 @@ export default function ShortenerForm() {
 
         try {
             const apiURL = process.env.NEXT_PUBLIC_API_URL;
+
             const res = await fetch(`${apiURL}/shorten`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -25,6 +39,17 @@ export default function ShortenerForm() {
             })
 
             const data = await res.json();
+
+            const newItem: HistoryItem = {
+                longUrl: longUrl,
+                shortUrl: data.short_url,
+                code: data.code,
+                timestamp: Date.now(),
+            }
+
+            const updatedHistory = [newItem, ...history].slice(0, 5);
+            setHistory(updatedHistory);
+            localStorage.setItem('url_history', JSON.stringify(updatedHistory));
 
             if (!res.ok) throw new Error(data.error || "Something went wrong");
 
@@ -88,6 +113,37 @@ export default function ShortenerForm() {
                         {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
                         {copied ? "Copied!" : "Copy"}
                     </button>
+                </div>
+            )}
+
+            {/* History Card */}
+            {history.length > 0 && (
+                <div className="mt-12 space-y-4">
+                    <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">
+                        Recent Links
+                    </h3>
+                    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
+                        {history.map((item) => (
+                            <div
+                                key={item.timestamp}
+                                className="flex items-center justify-between p-4 border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors"
+                            >
+                                <div className="min-w-0 flex-1 pr-4">
+                                    <p className="text-sm font-medium text-slate-900 truncate">{item.longUrl}</p>
+                                    <p className="text-xs text-blue-600 font-mono mt-1">{item.shortUrl}</p>
+                                </div>
+                                <button
+                                    onClick={() => {
+                                        navigator.clipboard.writeText(item.shortUrl);
+                                        alert("Copied to clipboard!"); // Or use a nice toast
+                                    }}
+                                    className="p-2 text-slate-400 hover:text-blue-600 transition-colors"
+                                >
+                                    <Copy className="h-4 w-4" />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
         </div>
